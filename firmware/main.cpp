@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -21,13 +22,22 @@
 #define UART_PORT_NUM      UART_NUM_0
 #define UART_BAUD_RATE     115200
 
-// PSRAM Buffer for 10s H.264 (NAL units)
+// Thresholds
+#define BATT_STABILIZE_VOLTAGE 12.6
+#define BATT_CRITICAL_VOLTAGE  11.8
+#define SHUTDOWN_DELAY_MS      (5 * 60 * 1000)
+
+// PSRAM Buffer for 10s H.264
 #define PSRAM_BUFFER_SIZE (16 * 1024 * 1024)
 static uint8_t *video_buffer = NULL;
 static size_t write_ptr = 0;
 
 static bool jetson_powered = false;
 static uint64_t ignition_lost_time = 0;
+
+// PID for Thermal Loop
+static float fan_Kp = 2.0, fan_Ki = 0.5;
+static float integral_error = 0;
 
 void IRAM_ATTR imu_interrupt_handler(void* arg) {
     gpio_set_level((gpio_num_t)CRITICAL_FLUSH_GPIO, 1);
@@ -36,6 +46,18 @@ void IRAM_ATTR imu_interrupt_handler(void* arg) {
 void init_hardware() {
     video_buffer = (uint8_t*)heap_caps_malloc(PSRAM_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
 
+    // UART
+    uart_config_t uart_config = {
+        .baud_rate = UART_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+    };
+    uart_param_config(UART_PORT_NUM, &uart_config);
+    uart_driver_install(UART_PORT_NUM, 1024, 0, 0, NULL, 0);
+
+    // GPIO
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_POSEDGE;
     io_conf.pin_bit_mask = (1ULL << IMU_INT_GPIO) | (1ULL << IGNITION_SENSE_GPIO);
@@ -48,8 +70,8 @@ void init_hardware() {
 
     gpio_set_direction((gpio_num_t)JETSON_POWER_EN_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_direction((gpio_num_t)CRITICAL_FLUSH_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level((gpio_num_t)CRITICAL_FLUSH_GPIO, 0);
 
+    // PWM Fan
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_8_BIT,
@@ -58,7 +80,6 @@ void init_hardware() {
         .clk_cfg = LEDC_AUTO_CLK
     };
     ledc_timer_config(&ledc_timer);
-
     ledc_channel_config_t ledc_channel = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = LEDC_CHANNEL_0,
@@ -70,27 +91,9 @@ void init_hardware() {
     };
     ledc_channel_config(&ledc_channel);
 
-    uart_config_t uart_config = {
-        .baud_rate = UART_BAUD_RATE,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
-    };
-    uart_param_config(UART_PORT_NUM, &uart_config);
-    uart_driver_install(UART_PORT_NUM, 1024, 0, 0, NULL, 0);
-
+    // ADC
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
-}
-
-// Simulated RTSP Ingestion into PSRAM
-void rtsp_ingest_task(void *pvParameters) {
-    while(1) {
-        // Logic to receive H.264 packets via Ethernet and write to video_buffer
-        // This acts as the 10s rolling buffer
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
 }
 
 void process_packet(uint8_t *data, size_t len) {
@@ -106,9 +109,8 @@ void process_packet(uint8_t *data, size_t len) {
             sabre_fan_payload_t *payload = (sabre_fan_payload_t*)(data + sizeof(sabre_packet_header_t));
             ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, payload->fan_pwm_percent);
             ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-        } else if (header->command_id == CMD_HIT_TRIGGER) {
-            printf("HIT TRIGGER: Saving context buffer to NVMe.\n");
-            // Trigger file save logic here
+        } else if (header->command_id == CMD_CLEAR_INTERRUPT) {
+            gpio_set_level((gpio_num_t)CRITICAL_FLUSH_GPIO, 0);
         }
     }
 }
@@ -139,11 +141,23 @@ void power_management_task(void *pvParameters) {
 extern "C" void app_main() {
     init_hardware();
     xTaskCreate(power_management_task, "power_task", 4096, NULL, 5, NULL);
-    xTaskCreate(rtsp_ingest_task, "rtsp_task", 8192, NULL, 10, NULL);
 
-    uint8_t rx_buffer[256];
+    uint8_t rx_byte;
+    uint8_t packet_buffer[256];
+    int state = 0, idx = 0, payload_len = 0;
+
     while(1) {
-        int len = uart_read_bytes(UART_PORT_NUM, rx_buffer, sizeof(rx_buffer), 10 / portTICK_PERIOD_MS);
-        if (len > 0) process_packet(rx_buffer, len);
+        if (uart_read_bytes(UART_PORT_NUM, &rx_byte, 1, 10 / portTICK_PERIOD_MS) > 0) {
+            if (state == 0 && rx_byte == 0x53) { packet_buffer[idx++] = rx_byte; state = 1; }
+            else if (state == 1 && rx_byte == 0x42) { packet_buffer[idx++] = rx_byte; state = 2; }
+            else if (state == 2) { payload_len = rx_byte; packet_buffer[idx++] = rx_byte; state = 3; }
+            else if (state == 3) {
+                packet_buffer[idx++] = rx_byte;
+                if (idx >= (4 + payload_len + 2)) {
+                    process_packet(packet_buffer, idx);
+                    state = 0; idx = 0;
+                }
+            } else { state = 0; idx = 0; }
+        }
     }
 }
