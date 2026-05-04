@@ -2,27 +2,29 @@
 
 ## Hardware Logic & Pin-Mapping
 
-### 1. Jetson-to-ESP32 Interface
-The primary communication is via UART (115200 Baud) and a dedicated hardware interrupt for "Black Box" events.
+### 1. Power Distribution (High-Current)
+Power is strictly separated from logic signals to prevent noise and ensure reliability in extreme heat.
 
-- **UART:** `/dev/ttyTHS1` (Jetson) <-> `UART0` (ESP32-P4)
-- **Critical Flush Interrupt:**
-  - **ESP32-P4:** GPIO 14 (Output, Active High)
-  - **Jetson Orin Nano:** GPIO 421 (Input, Edge Triggered)
-- **System Reset (Watchdog):**
-  - **ESP32-P4:** GPIO 18 (Output, Active Low)
-  - **Jetson Orin Nano:** SYS_RESET (Dedicated Reset Pin)
+- **PMB → NPB (Network Board):** Samtec 4-blade terminal.
+  - **Blades 1-2:** 12V Rail (System Logic)
+  - **Blades 3-4:** 48V Rail (High-Power PoE Cameras)
+- **PMB → CORE (Jetson Board):** Samtec 2-blade terminal.
+  - **Blades 1-2:** 12V Rail (AI Engine)
+- **Local Step-downs:** 3.3V and 5.0V regulation happens locally on the NPB and CORE boards.
 
-### 2. Samtec Bridge Pinout (CORE to NPB)
+### 2. Samtec 40-Pin Data Bridge (CORE to NPB)
+Strictly for high-speed differential pairs and low-voltage logic. No power rails.
+
 | Pin | Signal | Direction | Function |
 |---|---|---|---|
-| 1 | 48V_IN | NPB -> CORE | PoE Power In |
+| 1-4 | NC | - | RESERVED |
 | 5 | UART_TX | CORE -> NPB | Debug Console |
 | 7 | UART_RX | NPB -> CORE | Debug Console |
-| 12 | GPIO_14 | NPB -> CORE | Critical Flush |
-| 15 | GPIO_18 | NPB -> CORE | Watchdog Reset |
+| 12 | GPIO_14 | NPB -> CORE | Critical Flush Interrupt |
+| 15 | GPIO_18 | NPB -> CORE | Watchdog Reset (Active Low) |
 | 20 | CAN_H | NPB <-> CORE | OBD-II Link |
 | 22 | CAN_L | NPB <-> CORE | OBD-II Link |
+| 25-32 | MDI_P/N | CORE <-> NPB | PHY-to-PHY Ethernet Link |
 
 ### 3. GPIO Mapping (Final Verified)
 - **Jetson (Power En):** GPIO 12
@@ -30,3 +32,4 @@ The primary communication is via UART (115200 Baud) and a dedicated hardware int
 - **ESP32 (Ignition Sense):** GPIO 16
 - **ESP32 (IMU Interrupt):** GPIO 17
 - **ESP32 (Watchdog Out):** GPIO 18
+- **ESP32 (Reset Out):** GPIO 18 -> Jetson SYS_RESET
