@@ -11,12 +11,10 @@
 #include "esp_heap_caps.h"
 #include "../../shared/sabre_protocol.h"
 
-// Thresholds
 #define BATT_STABILIZE_VOLTAGE 12.6
 #define BATT_CRITICAL_VOLTAGE  11.8
 #define SHUTDOWN_DELAY_MS      (5 * 60 * 1000)
 
-// Pin Definitions
 #define JETSON_POWER_EN_GPIO 12
 #define CRITICAL_FLUSH_GPIO  14
 #define FAN_PWM_GPIO         15
@@ -38,50 +36,50 @@ void IRAM_ATTR imu_isr(void* arg) {
 void init_guardian() {
     video_buffer = (uint8_t*)heap_caps_malloc(PSRAM_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
 
-    // UART Setup
+    // UART
     uart_config_t uart_cfg = { .baud_rate = 115200, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE, .stop_bits = UART_STOP_BITS_1 };
     uart_param_config(UART_NUM_0, &uart_cfg);
     uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0);
 
-    // GPIO Setup
+    // GPIO
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_POSEDGE,
+        .mode = GPIO_MODE_INPUT,
+        .pin_bit_mask = (1ULL << IMU_INT_GPIO) | (1ULL << IGNITION_SENSE_GPIO),
+        .pull_up_en = GPIO_PULLUP_ENABLE
+    };
+    gpio_config(&io_conf);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add((gpio_num_t)IMU_INT_GPIO, imu_isr, NULL);
+
     gpio_set_direction((gpio_num_t)JETSON_POWER_EN_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_direction((gpio_num_t)CRITICAL_FLUSH_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_direction((gpio_num_t)SYS_RESET_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)SYS_RESET_GPIO, 1);
-
-    gpio_set_direction((gpio_num_t)IGNITION_SENSE_GPIO, GPIO_MODE_INPUT);
-    gpio_set_pull_mode((gpio_num_t)IGNITION_SENSE_GPIO, GPIO_PULLUP_ONLY);
-
-    // ADC
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
 }
 
-// H.264 PSRAM Circular Buffer with IDR alignment
-void store_video_packet(uint8_t *data, size_t len) {
-    if (len > PSRAM_BUFFER_SIZE) return;
+void process_packet(uint8_t *data, size_t len) {
+    sabre_packet_header_t *h = (sabre_packet_header_t*)data;
+    if (h->header != SABRE_HEADER) return;
 
-    // Scan for IDR (NAL 0x05)
-    for (size_t i = 0; i < len - 4; i++) {
-        if (data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x00 && data[i+3] == 0x01) {
-            if ((data[i+4] & 0x1F) == 5) {
-                write_idx = 0; // Snap to Start
-            }
-        }
+    if (h->command_id == CMD_HEARTBEAT) {
+        last_heartbeat = esp_timer_get_time() / 1000;
+    } else if (h->command_id == CMD_CLEAR_INTERRUPT) {
+        gpio_set_level((gpio_num_t)CRITICAL_FLUSH_GPIO, 0);
     }
-
-    if (write_idx + len > PSRAM_BUFFER_SIZE) write_idx = 0;
-    memcpy(video_buffer + write_idx, data, len);
-    write_idx += len;
 }
 
 extern "C" void app_main() {
     init_guardian();
     last_heartbeat = esp_timer_get_time() / 1000;
 
-    uint8_t rx_buf[256];
+    uint8_t rx_byte;
+    uint8_t packet_buffer[256];
+    int state = 0, idx = 0, payload_len = 0;
+
     while(1) {
-        // Power Logic
+        // Watchdog & Power Management
         int raw = adc1_get_raw(ADC1_CHANNEL_0);
         float v = (raw / 4095.0) * 15.0;
         bool ign = gpio_get_level((gpio_num_t)IGNITION_SENSE_GPIO);
@@ -91,23 +89,19 @@ extern "C" void app_main() {
             jetson_on = true;
         }
 
-        // UART / Heartbeat
-        int len = uart_read_bytes(UART_NUM_0, rx_buf, sizeof(rx_buf), 10 / portTICK_PERIOD_MS);
-        if (len > 0) {
-            sabre_packet_header_t *h = (sabre_packet_header_t*)rx_buf;
-            if (h->header == SABRE_HEADER && h->command_id == CMD_HEARTBEAT) {
-                last_heartbeat = esp_timer_get_time() / 1000;
-            }
+        if (uart_read_bytes(UART_NUM_0, &rx_byte, 1, 5 / portTICK_PERIOD_MS) > 0) {
+            if (state == 0 && rx_byte == 0x53) { packet_buffer[idx++] = rx_byte; state = 1; }
+            else if (state == 1 && rx_byte == 0x42) { packet_buffer[idx++] = rx_byte; state = 2; }
+            else if (state == 2) { payload_len = rx_byte; packet_buffer[idx++] = rx_byte; state = 3; }
+            else if (state == 3) {
+                packet_buffer[idx++] = rx_byte;
+                if (idx >= (4 + payload_len + 2)) {
+                    process_packet(packet_buffer, idx);
+                    state = 0; idx = 0;
+                }
+            } else { state = 0; idx = 0; }
         }
 
-        // Watchdog
-        if (jetson_on && (esp_timer_get_time() / 1000 - last_heartbeat > 60000)) {
-            gpio_set_level((gpio_num_t)SYS_RESET_GPIO, 0);
-            vTaskDelay(pdMS_TO_TICKS(500));
-            gpio_set_level((gpio_num_t)SYS_RESET_GPIO, 1);
-            last_heartbeat = esp_timer_get_time() / 1000;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
