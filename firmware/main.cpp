@@ -11,10 +11,7 @@
 #include "esp_heap_caps.h"
 #include "../../shared/sabre_protocol.h"
 
-#define BATT_STABILIZE_VOLTAGE 12.6
-#define BATT_CRITICAL_VOLTAGE  11.8
-#define SHUTDOWN_DELAY_MS      (5 * 60 * 1000)
-
+// Hardware Mapping
 #define JETSON_POWER_EN_GPIO 12
 #define CRITICAL_FLUSH_GPIO  14
 #define FAN_PWM_GPIO         15
@@ -25,9 +22,7 @@
 #define PSRAM_BUFFER_SIZE (16 * 1024 * 1024)
 static uint8_t *video_buffer = NULL;
 static size_t write_idx = 0;
-
 static uint64_t last_heartbeat = 0;
-static bool jetson_on = false;
 
 void IRAM_ATTR imu_isr(void* arg) {
     gpio_set_level((gpio_num_t)CRITICAL_FLUSH_GPIO, 1);
@@ -36,72 +31,62 @@ void IRAM_ATTR imu_isr(void* arg) {
 void init_guardian() {
     video_buffer = (uint8_t*)heap_caps_malloc(PSRAM_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
 
-    // UART
-    uart_config_t uart_cfg = { .baud_rate = 115200, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE, .stop_bits = UART_STOP_BITS_1 };
-    uart_param_config(UART_NUM_0, &uart_cfg);
+    // UART 115200
+    uart_config_t u_cfg = { .baud_rate = 115200, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE, .stop_bits = UART_STOP_BITS_1 };
+    uart_param_config(UART_NUM_0, &u_cfg);
     uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0);
 
-    // GPIO
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_POSEDGE,
-        .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << IMU_INT_GPIO) | (1ULL << IGNITION_SENSE_GPIO),
-        .pull_up_en = GPIO_PULLUP_ENABLE
-    };
-    gpio_config(&io_conf);
-
+    // GPIO & ISR
+    gpio_config_t io = { .intr_type = GPIO_INTR_POSEDGE, .mode = GPIO_MODE_INPUT, .pin_bit_mask = (1ULL << IMU_INT_GPIO), .pull_up_en = 1 };
+    gpio_config(&io);
     gpio_install_isr_service(0);
     gpio_isr_handler_add((gpio_num_t)IMU_INT_GPIO, imu_isr, NULL);
 
     gpio_set_direction((gpio_num_t)JETSON_POWER_EN_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_direction((gpio_num_t)CRITICAL_FLUSH_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_direction((gpio_num_t)SYS_RESET_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)SYS_RESET_GPIO, 1);
+
+    // PWM Fan (25kHz)
+    ledc_timer_config_t lt = { .speed_mode = LEDC_LOW_SPEED_MODE, .duty_resolution = LEDC_TIMER_8_BIT, .timer_num = LEDC_TIMER_0, .freq_hz = 25000, .clk_cfg = LEDC_AUTO_CLK };
+    ledc_timer_config(&lt);
+    ledc_channel_config_t lc = { .speed_mode = LEDC_LOW_SPEED_MODE, .channel = LEDC_CHANNEL_0, .timer_sel = LEDC_TIMER_0, .gpio_num = FAN_PWM_GPIO, .duty = 0 };
+    ledc_channel_config(&lc);
+
+    // ADC
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
 }
 
-void process_packet(uint8_t *data, size_t len) {
-    sabre_packet_header_t *h = (sabre_packet_header_t*)data;
-    if (h->header != SABRE_HEADER) return;
-
-    if (h->command_id == CMD_HEARTBEAT) {
-        last_heartbeat = esp_timer_get_time() / 1000;
-    } else if (h->command_id == CMD_CLEAR_INTERRUPT) {
-        gpio_set_level((gpio_num_t)CRITICAL_FLUSH_GPIO, 0);
+// NAL unit scanning and IDR snapping
+void process_video(uint8_t *data, size_t len) {
+    for (size_t i = 0; i < len - 4; i++) {
+        if (data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x00 && data[i+3] == 0x01) {
+            if ((data[i+4] & 0x1F) == 5) write_idx = 0; // IDR Frame
+        }
+    }
+    if (write_idx + len < PSRAM_BUFFER_SIZE) {
+        memcpy(video_buffer + write_idx, data, len);
+        write_idx += len;
     }
 }
 
 extern "C" void app_main() {
     init_guardian();
     last_heartbeat = esp_timer_get_time() / 1000;
-
-    uint8_t rx_byte;
-    uint8_t packet_buffer[256];
-    int state = 0, idx = 0, payload_len = 0;
-
+    uint8_t buf[256];
     while(1) {
-        // Watchdog & Power Management
-        int raw = adc1_get_raw(ADC1_CHANNEL_0);
-        float v = (raw / 4095.0) * 15.0;
-        bool ign = gpio_get_level((gpio_num_t)IGNITION_SENSE_GPIO);
-
-        if (!jetson_on && v >= BATT_STABILIZE_VOLTAGE && ign) {
-            gpio_set_level((gpio_num_t)JETSON_POWER_EN_GPIO, 1);
-            jetson_on = true;
+        // Watchdog & Heartbeat
+        int len = uart_read_bytes(UART_NUM_0, buf, sizeof(buf), 10 / portTICK_PERIOD_MS);
+        if (len > 0) {
+            sabre_packet_header_t *h = (sabre_packet_header_t*)buf;
+            if (h->header == SABRE_HEADER && h->command_id == CMD_HEARTBEAT) last_heartbeat = esp_timer_get_time() / 1000;
         }
-
-        if (uart_read_bytes(UART_NUM_0, &rx_byte, 1, 5 / portTICK_PERIOD_MS) > 0) {
-            if (state == 0 && rx_byte == 0x53) { packet_buffer[idx++] = rx_byte; state = 1; }
-            else if (state == 1 && rx_byte == 0x42) { packet_buffer[idx++] = rx_byte; state = 2; }
-            else if (state == 2) { payload_len = rx_byte; packet_buffer[idx++] = rx_byte; state = 3; }
-            else if (state == 3) {
-                packet_buffer[idx++] = rx_byte;
-                if (idx >= (4 + payload_len + 2)) {
-                    process_packet(packet_buffer, idx);
-                    state = 0; idx = 0;
-                }
-            } else { state = 0; idx = 0; }
+        if (esp_timer_get_time()/1000 - last_heartbeat > 60000) {
+            gpio_set_level((gpio_num_t)SYS_RESET_GPIO, 0);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            gpio_set_level((gpio_num_t)SYS_RESET_GPIO, 1);
+            last_heartbeat = esp_timer_get_time() / 1000;
         }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }

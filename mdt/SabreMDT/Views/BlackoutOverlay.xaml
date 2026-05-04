@@ -1,0 +1,10 @@
+<Window x:Class="SabreMDT.Views.BlackoutOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Blackout" WindowStyle="None" WindowState="Maximized" Topmost="True"
+        Background="#000000" ShowInTaskbar="False">
+    <!-- Irreversible UI Blackout Overlay -->
+    <Grid IsHitTestVisible="False">
+        <Rectangle Fill="#000000"/>
+    </Grid>
+</Window>

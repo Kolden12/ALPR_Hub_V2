@@ -1,21 +1,21 @@
 -- Sabre ALPR Hub - SQLite Schema
--- Optimized for NVMe, High-Vibration, and Forensic Audit
+-- Final "Golden Master" - Optimized for WAL and Forensic Security
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
-PRAGMA cache_size=-64000; -- 64MB Cache
+PRAGMA cache_size=-64000;
 
 CREATE TABLE IF NOT EXISTS shifts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     officer_id TEXT NOT NULL,
     vehicle_id TEXT NOT NULL,
-    disclaimer_accepted_at TEXT NOT NULL, -- ISO8601 UTC
-    shift_start TEXT NOT NULL,            -- ISO8601 UTC
-    shift_end TEXT                        -- ISO8601 UTC (NULL until end)
+    disclaimer_accepted_at TEXT NOT NULL,
+    shift_start TEXT NOT NULL,
+    shift_end TEXT
 );
 
 CREATE TABLE IF NOT EXISTS hits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    shift_id INTEGER,                -- Linked to shifts.id
+    shift_id INTEGER,
     timestamp_iso8601 TEXT NOT NULL,
     plate_text TEXT NOT NULL,
     plate_confidence REAL,
