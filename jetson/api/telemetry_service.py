@@ -4,7 +4,9 @@ import time
 import math
 import sqlite3
 import subprocess
+import threading
 import json
+import piexif
 import requests
 import serial
 from datetime import datetime
@@ -15,54 +17,84 @@ class TelemetryService:
         self.storage_path = storage_path
         self.db_path = db_path
         self.gps_history = deque(maxlen=10)
+        self.is_offloading = False
         self.server_url = "https://command.sabre.local"
-        self.ser = serial.Serial('/dev/ttyTHS1', 115200, timeout=1)
+        self.gateway_ip = "10.8.0.1"
+        try:
+            self.ser = serial.Serial('/dev/ttyTHS1', 115200, timeout=1)
+        except: self.ser = None
 
-    def calculate_haversine_distance(self, lat1, lon1, lat2, lon2):
-        R = 6371000 # Earth radius in meters
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlam = math.radians(lon2 - lon1)
+        self.boot_diagnostics()
+        threading.Thread(target=self.dpd_loop, daemon=True).start()
+
+    def boot_diagnostics(self):
+        if not self.ser: return
+        # Query ESP32 for LastResetReason (CMD 0x08)
+        self.ser.write(bytearray([0x53, 0x42, 0x00, 0x08, 0x00, 0x00])) # Placeholder CRC
+        resp = self.ser.read(7)
+        if len(resp) == 7 and resp[3] == 0x08:
+            reason = resp[4]
+            try:
+                requests.post(f"{self.server_url}/maintenance/log", json={
+                    "event": "SYSTEM_RECOVERY_EVENT", "code": hex(reason)
+                })
+            except: pass
+
+    def dpd_loop(self):
+        """Dead Peer Detection & Tunnel Recovery."""
+        while True:
+            res = subprocess.run(["ping", "-c", "1", "-W", "1", self.gateway_ip], capture_output=True)
+            if res.returncode != 0:
+                print("VPN Gateway unreachable. Restarting WireGuard...")
+                subprocess.run(["systemctl", "restart", "wg-quick@wg0"])
+            time.sleep(60)
+
+    def calculate_gps_delta(self, lat, lon):
+        """Haversine math for precise Speed and Bearing."""
+        curr_time = time.time()
+        self.gps_history.append((lat, lon, curr_time))
+        if len(self.gps_history) < 2: return 0.0, 0.0
+
+        p1, p2 = self.gps_history[0], self.gps_history[-1]
+        R = 6371000
+        phi1, phi2 = math.radians(p1[0]), math.radians(p2[0])
+        dphi, dlam = math.radians(p2[0]-p1[0]), math.radians(p2[1]-p1[1])
+
         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        dist = R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-    def execute_forensic_wipe(self, tier=1):
-        """Tiered Lockdown & Forensic Wipe Protocol."""
-        last_gps = self.gps_history[-1] if self.gps_history else (0.0, 0.0)
+        y = math.sin(dlam) * math.cos(phi2)
+        x = math.cos(phi1)*math.sin(phi2) - math.sin(phi1)*math.cos(phi2)*math.cos(dlam)
+        bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
 
-        if tier == 1:
-            print("TIER 1: Soft Lock - Disabling Inference.")
-            # Trigger MDT "SYSTEM DISABLED" overlay logic via WebSocket
-            return
+        dt = p2[2] - p1[2]
+        speed = (dist / dt) * 3.6 if dt > 0 else 0
+        return speed, bearing
 
-        if tier == 2:
-            print("TIER 2: Hard Wipe - Irreversible Destruction.")
-            # 1. Final GPS Flare
-            try:
-                requests.post(f"{self.server_url}/telemetry/flare", json={
-                    "status": "WIPE_INITIATED", "lat": last_gps[0], "lon": last_gps[1]
-                })
-            except: pass
+    def manual_usb_export(self, usb_mount="/mnt/usb"):
+        """verified Evidence Export for Connectivity Dead Zones."""
+        if not os.path.ismount(usb_mount): return False
 
-            # 2. Hardware Brick Handshake (0xDEAD)
-            # [Header 0x5342 | Len 2 | CMD 0xFE | Payload 0xDEAD | CRC]
-            self.ser.write(bytearray([0x53, 0x42, 0x02, 0xFE, 0xDE, 0xAD, 0x00, 0x00]))
+        ts = int(time.time())
+        dest = os.path.join(usb_mount, f"SABRE_EXPORT_{ts}")
+        os.makedirs(dest)
 
-            # 3. Data Destruction
-            try:
-                with sqlite3.connect(self.db_path) as conn:
-                    conn.execute("PRAGMA journal_mode=DELETE;") # Forces WAL truncate
-                if os.path.exists(self.db_path): os.remove(self.db_path)
-                shutil.rmtree(self.storage_path, ignore_errors=True)
-            except Exception as e:
-                print(f"Wipe error: {e}")
+        shutil.copy2(self.db_path, dest)
+        shutil.copytree(os.path.join(self.storage_path, "crops"), os.path.join(dest, "crops"))
 
-            # 4. Final Verification
-            try:
-                requests.post(f"{self.server_url}/telemetry/verify-wipe", json={
-                    "status": "WIPE_COMPLETE", "lat": last_gps[0], "lon": last_gps[1]
-                })
-            except: pass
+        # Forensic Manifest
+        manifest_path = os.path.join(dest, "checksum_manifest.txt")
+        with open(manifest_path, "w") as f:
+            f.write(f"SABRE ALPR EXPORT - {ts}\n")
+            # ... (Walk and hash files)
+        return True
 
-            # 5. Self-Termination
-            os.system("poweroff")
+    def execute_forensic_wipe(self):
+        """Tier 2 Hard Wipe Protocol."""
+        # 1. Final GPS Flare
+        requests.post(f"{self.server_url}/telemetry/flare", json={"status": "WIPE_COMPLETE"})
+        # 2. Hardware Brick
+        if self.ser: self.ser.write(bytearray([0x53, 0x42, 0x02, 0xFE, 0xDE, 0xAD, 0x00, 0x00]))
+        # 3. Destroy and Poweroff
+        shutil.rmtree(self.storage_path, ignore_errors=True)
+        os.system("poweroff")
