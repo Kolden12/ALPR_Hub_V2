@@ -1,29 +1,24 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace SabreMDT.ViewModels
 {
     public class MainViewModel : INotifyPropertyChanged
     {
-        private bool _isProvisioned = false;
-        public bool IsProvisioned
+        private BitmapImage? _agencyLogo;
+        public BitmapImage? AgencyLogo
         {
-            get => _isProvisioned;
-            set { _isProvisioned = value; OnPropertyChanged(); }
+            get => _agencyLogo;
+            set { _agencyLogo = value; OnPropertyChanged(); }
         }
 
-        public void CheckProvisioningStatus()
+        public async void SyncBranding(string logoUrl)
         {
-            // Lock UI in First Run Wizard if no valid JWT/Profile exists on the Hub
-            if (string.IsNullOrEmpty(ConfigurationManager.GetJwt()))
-            {
-                IsProvisioned = false;
-            }
-            else
-            {
-                IsProvisioned = true;
-            }
+            // Implementation to download logo from URL, cache locally, and bind to UI
+            // WatermarkOpacity = 0.3;
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -31,10 +26,5 @@ namespace SabreMDT.ViewModels
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
-    }
-
-    public static class ConfigurationManager
-    {
-        public static string GetJwt() => ""; // Implementation
     }
 }

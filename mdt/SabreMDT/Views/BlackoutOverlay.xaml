@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Blackout" WindowStyle="None" WindowState="Maximized" Topmost="True"
         Background="#000000" ShowInTaskbar="False">
-    <!-- Irreversible UI Blackout Overlay -->
+    <!-- Tier 2 Hard Wipe Blackout -->
     <Grid IsHitTestVisible="False">
         <Rectangle Fill="#000000"/>
     </Grid>
