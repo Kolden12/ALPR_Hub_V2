@@ -1,0 +1,23 @@
+[property]
+gpu-id=0
+net-config-interval=0
+gie-unique-id=1
+model-color-format=0
+onnx-file=../models/yolov8n_alpr.onnx
+model-engine-file=../models/yolov8n_alpr.engine
+labelfile-path=labels.txt
+batch-size=2
+network-mode=2 # INT8
+num-detected-classes=2
+interval=0
+gie-unique-id=1
+process-mode=1
+network-type=0
+# Placeholder for YOLOv8 specific parsing if required
+# parse-bbox-func-name=NvDsInferParseCustomYoloV8
+# custom-lib-path=../libs/nvdsinfer_custom_impl_yolo/libnvdsinfer_custom_impl_yolo.so
+
+[class-attrs-all]
+pre-cluster-threshold=0.25
+topk=20
+nms-iou-threshold=0.45

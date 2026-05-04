@@ -1,0 +1,15 @@
+[property]
+gpu-id=0
+gie-unique-id=2
+operate-on-gie-id=1
+operate-on-class-ids=1 # vehicle
+model-color-format=0
+onnx-file=../models/ymmv_classifier.onnx
+model-engine-file=../models/ymmv_classifier.engine
+batch-size=16
+network-mode=2 # INT8
+network-type=1 # Classifier
+process-mode=2 # Secondary
+
+[class-attrs-all]
+pre-cluster-threshold=0.5

@@ -1,0 +1,30 @@
+services:
+  deepstream:
+    image: nvcr.io/nvidia/deepstream:7.1-triton-multiarch
+    container_name: sabre-deepstream
+    restart: always
+    network_mode: host
+    runtime: nvidia
+    volumes:
+      - ./config:/opt/nvidia/deepstream/deepstream/sources/sabre_app/config
+      - ./models:/opt/nvidia/deepstream/deepstream/sources/sabre_app/models
+      - /mnt/sabre_storage:/mnt/sabre_storage
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    environment:
+      - DISPLAY=${DISPLAY}
+    devices:
+      - /dev/ttyTHS1:/dev/ttyTHS1 # UART link to ESP32
+    command: /opt/nvidia/deepstream/deepstream/sources/sabre_app/sabre_alpr_app -c config/ds_config.txt
+
+  api-server:
+    build: ./api
+    container_name: sabre-api
+    restart: always
+    network_mode: host
+    volumes:
+      - /mnt/sabre_storage:/mnt/sabre_storage
+      - ../shared:/app/shared
+    environment:
+      - DB_PATH=/mnt/sabre_storage/sabre_hub.db
+    depends_on:
+      - deepstream

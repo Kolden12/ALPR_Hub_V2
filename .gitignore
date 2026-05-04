@@ -1,0 +1,44 @@
+# Build and IDE
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.suo
+*.user
+*.userosscache
+*.sln.doccache
+*.pfx
+*.publishproj
+*.mdt.csproj.user
+.vs/
+
+# Jetson / DeepStream
+jetson/models/*.engine
+jetson/models/*.plan
+jetson/output/
+*.log
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# ESP32 / firmware
+firmware/build/
+firmware/sdkconfig
+firmware/managed_components/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Storage mount points (local development)
+mnt/sabre_storage/
