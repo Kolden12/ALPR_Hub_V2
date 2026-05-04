@@ -1,46 +1,33 @@
 -- Sabre ALPR Hub - SQLite Schema
 -- Optimized for WAL mode
+PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS hits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,         -- ISO8601 UTC
+    timestamp_iso8601 TEXT NOT NULL,
     plate_text TEXT NOT NULL,
     plate_confidence REAL,
-
-    -- YMMV (Year, Make, Model, Color)
-    vehicle_year TEXT,
-    vehicle_make TEXT,
-    vehicle_model TEXT,
-    vehicle_color TEXT,
-    ymmv_confidence REAL,
-
-    -- Telemetry
-    gps_latitude REAL,
-    gps_longitude REAL,
-    gps_speed_kph REAL,              -- Derived from GPS Delta
-    gps_direction_deg REAL,          -- Derived from GPS Delta
-
-    -- File Paths
-    plate_crop_path TEXT,            -- Path on NVMe (/mnt/sabre_storage/crops/...)
-    context_image_path TEXT,         -- Path on NVMe (/mnt/sabre_storage/context/...)
-
-    -- Security
-    sha256_hash TEXT NOT NULL,       -- Hashing Protocol signature
+    ymmv_json TEXT,
+    gps_lat REAL,
+    gps_long REAL,
+    speed_kph REAL,
+    direction_deg REAL,
+    image_path_ir TEXT,
+    image_path_color TEXT,
+    sha256_hash TEXT NOT NULL,
     hub_uuid TEXT NOT NULL,
-
-    -- Offload Status
-    is_offloaded INTEGER DEFAULT 0   -- 0: No, 1: Yes
+    is_offloaded INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS hotlist (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plate_text TEXT UNIQUE NOT NULL,
     description TEXT,
-    category TEXT,                   -- e.g., "Stolen", "Amber Alert"
+    category TEXT,
     added_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_hits_timestamp ON hits(timestamp);
+CREATE INDEX IF NOT EXISTS idx_hits_timestamp ON hits(timestamp_iso8601);
 CREATE INDEX IF NOT EXISTS idx_hits_plate ON hits(plate_text);
 CREATE INDEX IF NOT EXISTS idx_hits_offload ON hits(is_offloaded);
 CREATE INDEX IF NOT EXISTS idx_hotlist_plate ON hotlist(plate_text);

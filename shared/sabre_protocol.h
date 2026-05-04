@@ -2,6 +2,7 @@
 #define SABRE_PROTOCOL_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,20 +47,32 @@ typedef struct {
     uint8_t fan_pwm_percent;
 } sabre_fan_payload_t;
 
+// Full Packet Structure (Conceptual for size)
+typedef struct {
+    sabre_packet_header_t header;
+    uint8_t payload[255];
+    uint16_t crc;
+} sabre_packet_t;
+
 #pragma pack(pop)
 
 /**
- * Hashing Protocol for Chain of Custody
- *
- * SHA-256 Signature is calculated on a concatenated string:
- * Format: "TIMESTAMP|PLATE_TEXT|VEHICLE_YMMV|GPS_LAT|GPS_LONG|JETSON_UUID"
- *
- * 1. Timestamp: ISO8601 (UTC)
- * 2. Plate: Raw string (or "UNKNOWN")
- * 3. YMMV: "Year Make Model Color"
- * 4. GPS: Decimal degrees (6 decimal places)
- * 5. UUID: Unique identifier for the Hub hardware
+ * CRC16-CCITT calculation (Poly: 0x1021, Init: 0xFFFF)
  */
+static inline uint16_t sabre_crc16(const uint8_t *data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x8000) {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    return crc;
+}
 
 #ifdef __cplusplus
 }
