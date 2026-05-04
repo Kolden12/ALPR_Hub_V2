@@ -1,0 +1,29 @@
+<UserControl x:Class="SabreMDT.Views.FirstRunWizard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Height="450" Width="600" Background="#121212">
+    <Grid Margin="30">
+        <StackPanel>
+            <TextBlock Text="SABRE HUB - FIRST RUN SETUP" Foreground="#00FF00" FontSize="24" FontWeight="Bold" Margin="0,0,0,20"/>
+
+            <TextBlock Text="Station Offload IP:" Foreground="White" Margin="0,10,0,5"/>
+            <TextBox Text="{Binding StationIp}" Background="#333" Foreground="White" Padding="5"/>
+
+            <TextBlock Text="Geofence (Lat, Lon):" Foreground="White" Margin="0,10,0,5"/>
+            <StackPanel Orientation="Horizontal">
+                <TextBox Text="{Binding GeoLat}" Width="150" Background="#333" Foreground="White" Padding="5" Margin="0,0,10,0"/>
+                <TextBox Text="{Binding GeoLon}" Width="150" Background="#333" Foreground="White" Padding="5"/>
+            </StackPanel>
+
+            <TextBlock Text="Officer ID:" Foreground="White" Margin="0,10,0,5"/>
+            <TextBox Text="{Binding OfficerId}" Background="#333" Foreground="White" Padding="5"/>
+
+            <TextBlock Text="Vehicle ID:" Foreground="White" Margin="0,10,0,5"/>
+            <TextBox Text="{Binding VehicleId}" Background="#333" Foreground="White" Padding="5"/>
+
+            <Button Content="VALIDATE HUB CONNECTION" Command="{Binding ValidateCommand}" Background="#333" Foreground="#00FF00" Margin="0,20,0,10" Padding="10"/>
+
+            <Button Content="FINISH SETUP" Command="{Binding FinishCommand}" Background="#00FF00" Foreground="Black" FontWeight="Bold" Padding="10"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

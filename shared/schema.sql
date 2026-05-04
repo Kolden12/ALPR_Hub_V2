@@ -1,6 +1,8 @@
 -- Sabre ALPR Hub - SQLite Schema
--- Optimized for WAL mode
+-- Optimized for NVMe and High-Vibration
 PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA cache_size=-64000; -- 64MB Cache
 
 CREATE TABLE IF NOT EXISTS hits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
