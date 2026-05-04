@@ -1,0 +1,16 @@
+[Unit]
+Description=Sabre ALPR Hub - Telemetry and Offload Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/app/jetson/api
+ExecStart=/usr/bin/python3 telemetry_service.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/sabre_telemetry.log
+StandardError=append:/var/log/sabre_telemetry.log
+
+[Install]
+WantedBy=multi-user.target

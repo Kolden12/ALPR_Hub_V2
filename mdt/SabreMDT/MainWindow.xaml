@@ -22,7 +22,9 @@
                         <TextBlock Text="CONNECTED" Foreground="#00FF00" FontSize="12" VerticalAlignment="Center"/>
                     </Border>
                 </StackPanel>
+
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="END SHIFT &amp; GENERATE REPORT" Background="#FF3B30" Foreground="White" FontWeight="Bold" Padding="10,5" Margin="10,0" Command="{Binding EndShiftCommand}"/>
                     <TextBlock Text="OFFLOADING DATA..." Foreground="#FFCC00" VerticalAlignment="Center" Visibility="{Binding IsOffloading, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     <ProgressBar Width="150" Height="10" Margin="10,0" Value="75" Foreground="#00FF00" Visibility="{Binding IsOffloading, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 </StackPanel>
