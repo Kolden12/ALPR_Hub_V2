@@ -16,21 +16,31 @@ namespace SabreMDT.Services
             {
                 using (var client = new HttpClient())
                 {
-                    var data = new
+                    var payload = new
                     {
                         officer_id = officerId,
                         vehicle_id = vehicleId,
-                        timestamp = DateTime.UtcNow.ToString("o")
+                        accepted_at = DateTime.UtcNow.ToString("o"),
+                        event_type = "DISCLAIMER_ACCEPTED"
                     };
-                    var content = new StringContent(JsonConvert.SerializeObject(data), Encoding.UTF8, "application/json");
-                    var response = await client.PostAsync($"{_hubApiUrl}/shift/start", content);
-                    return response.IsSuccessStatusCode;
+
+                    var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+                    // Audit trail is recorded on the Hub and synced to the Command Center
+                    var response = await client.PostAsync($"{_hubApiUrl}/shift/audit", content);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        Console.WriteLine($"Audit logged: Officer {officerId} started shift in {vehicleId}");
+                        return true;
+                    }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
+                Console.WriteLine($"Shift Audit Failed: {ex.Message}");
             }
+            return false;
         }
     }
 }
