@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  api:
+    build: ./app
+    container_name: sabre-api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://sabre_user:sabre_pass@db:5432/sabre_fleet
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:15
+    container_name: sabre-db
+    restart: always
+    environment:
+      - POSTGRES_USER=sabre_user
+      - POSTGRES_PASSWORD=sabre_pass
+      - POSTGRES_DB=sabre_fleet
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: sabre-redis
+    restart: always
+
+  nginx:
+    image: nginx:latest
+    container_name: sabre-proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./static:/usr/share/nginx/html/static:ro
+
+volumes:
+  postgres_data:
